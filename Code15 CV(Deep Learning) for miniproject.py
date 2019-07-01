@@ -1,0 +1,1363 @@
+from tkinter import *
+from tkinter.simpledialog import *
+from tkinter.filedialog import *
+import math
+import os
+import os.path
+from PIL import Image, ImageFilter, ImageEnhance, ImageOps
+import time
+import matplotlib.pyplot as plt
+import colorsys
+import cv2
+# 파일을 선택해서 메모리로 로딩하는 함수
+
+####################
+# 메모리를 할당해서 리스트(참조)를 반환하는 함수
+# 메모리를 할당해서 리스트(참조)를 반환하는 함수
+def malloc(h, w, initValue=0) :
+    retMemory= []
+    for _ in range(h) :
+        tmpList = []
+        for _ in range(w) :
+            tmpList.append(initValue)
+        retMemory.append(tmpList)
+    return retMemory
+
+
+# 파일을 메모리로 로딩하는 함수
+def loadImageColor(fnameOrCvData) : # 파일명 or OpenCV 개체
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global photo, cvPhoto
+    inImage = []
+    #################################
+    ## PIL 개체 --> OpenCV 개체로 복사
+    if type(fnameOrCvData) == str :
+        cvData = cv2.imread(fnameOrCvData)  # 파일-->CV데이터
+    else :
+        cvData = fnameOrCvData
+    cvPhoto = cv2.cvtColor(cvData, cv2.COLOR_BGR2RGB) # 중요! CV개체
+    photo = Image.fromarray(cvPhoto)  # 중요! PIL 객체
+    inW = photo.width;    inH = photo.height
+    ################################
+    ## 메모리 확보
+    for _ in range(3) :
+        inImage.append(malloc(inH, inW))
+
+    photoRGB = photo.convert('RGB')
+    for i in range(inH) :
+        for k in range(inW) :
+            r, g, b = photoRGB.getpixel((k,i))
+            inImage[R][i][k] = r
+            inImage[G][i][k] = g
+            inImage[B][i][k] = b
+
+def openImageColor() :
+    global window, canvas, paper, filename, inImage, outImage,inH, inW, outH, outW
+
+    filename = askopenfilename(parent=window,
+                filetypes=(("칼라 파일", "*.jpg;*.png;*.bmp;*.tif"), ("모든 파일", "*.*")))
+    if filename == '' or filename == None :
+        return
+    loadImageColor(filename)
+    equalImageColor()
+    displayImageColor()
+
+def displayImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey
+    if canvas != None : # 예전에 실행한 적이 있다.
+        canvas.destroy()
+    global VIEW_X, VIEW_Y
+
+    # VIEW_X, VIEW_Y = 512, 512
+    ## 고정된 화면 크기
+    # 가로/세로 비율 계산
+    ratio = outH / outW
+    if ratio < 1:
+        VIEW_X = int(512 * ratio)
+    else:
+        VIEW_X = 512
+    if ratio > 1:
+        VIEW_Y = int(512 * ratio)
+    else:
+        VIEW_Y = 512
+
+    if outH <= VIEW_X :
+        VIEW_X = outH; stepX = 1
+    if outH > VIEW_X :
+        if ratio < 1 :
+            VIEW_X = int(512 * ratio)
+        else :
+            VIEW_X = 512
+        stepX = outH / VIEW_X
+
+    if outW <= VIEW_Y:
+        VIEW_Y = outW; stepY = 1
+    if outW > VIEW_Y:
+        if ratio > 1 :
+            VIEW_Y = int(512 * ratio)
+        else :
+            VIEW_Y = 512
+
+        stepY = outW / VIEW_Y
+
+    window.geometry(str(int(VIEW_Y*1.2)) + 'x' + str(int(VIEW_X*1.2)))  # 벽
+    canvas = Canvas(window, height=VIEW_X, width=VIEW_Y)
+    paper = PhotoImage(height=VIEW_X, width=VIEW_Y)
+    canvas.create_image((VIEW_Y // 2, VIEW_X // 2), image=paper, state='normal')
+
+    import numpy
+    rgbStr = '' # 전체 픽셀의 문자열을 저장
+    for i in numpy.arange(0,outH, stepX) :
+        tmpStr = ''
+        for k in numpy.arange(0,outW, stepY) :
+            i = int(i); k = int(k)
+            r , g, b = outImage[R][i][k], outImage[G][i][k], outImage[B][i][k]
+            tmpStr += ' #%02x%02x%02x' % (r,g,b)
+        rgbStr += '{' + tmpStr + '} '
+    paper.put(rgbStr)
+
+    canvas.bind('<Button-3>', rightMouseClick)
+    canvas.bind('<Button-2>', midMouseClick)
+    canvas.bind('<Button-1>', leftMouseClick)
+    canvas.bind('<B1-Motion>', leftMouseMove)
+    canvas.bind('<ButtonRelease-1>', leftMouseDrop)
+    canvas.configure(cursor='mouse')
+
+    canvas.pack(expand=1, anchor=CENTER)
+    status.configure(text='이미지 정보:' + str(outW) + 'x' + str(outH))
+
+import numpy as np
+def saveImageColor():
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    if outImage == None :
+        return
+    outArray= []
+    for i in range(outH) :
+        tmpList = []
+        for k in range(outW) :
+            tup = tuple([outImage[R][i][k],outImage[G][i][k],outImage[B][i][k],])
+            tmpList.append(tup)
+        outArray.append(tmpList)
+
+    outArray = np.array(outArray)
+    savePhoto = Image.fromarray(outArray.astype(np.uint8), 'RGB')
+
+    saveFp = asksaveasfile(parent=window, mode='wb',
+                           defaultextension='.', filetypes=(("그림 파일", "*.png;*.jpg;*.bmp;*.tif"), ("모든 파일", "*.*")))
+    if saveFp == '' or saveFp == None:
+        return
+    savePhoto.save(saveFp.name)
+    print('Save~')
+
+###############################################
+##### 마우스 이벤트 관리 #####
+###############################################
+sx,sy,ex,ey = [0] *4
+# x0,y0,ex,ey = [0] *4
+
+def leftMouseDrop(event):
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey
+    ex = event.x;
+    ey = event.y
+    if sx > ex:
+        sx, ex = ex, sx
+    if sy > ey:
+        sy, ey = ey, sy
+
+    if inH > VIEW_X:
+        sx = int(sx * (inH / VIEW_X));
+        ex = int(ex * (inH / VIEW_X))
+    if inW > VIEW_Y:
+        sy = int(sy * (inW / VIEW_Y));
+        ey = int(ey * (inW / VIEW_Y))
+
+    canvas.unbind('<Button-3>')
+    canvas.bind('<Button-2>', midMouseClick)
+    canvas.unbind('<Button-1>')
+    canvas.unbind('<B1-Motion>')
+    canvas.unbind('<ButtonRelease-1>')
+boxLine = None
+def leftMouseMove(event):
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey, boxLine
+    ex = event.x;
+    ey = event.y
+    if not boxLine :
+        pass
+    else:
+        canvas.delete(boxLine)
+    boxLine = canvas.create_rectangle(sx, sy, ex, ey, fill=None)
+
+def leftMouseClick(event):
+    global sx, sy, ex, ey
+    sx = event.x;
+    sy = event.y
+
+def midMouseClick(event):
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey
+
+    paper.blank()
+    equalImageColor()
+
+
+def rightMouseClick(event):
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global  sx, sy, ex, ey, mouseMenu
+
+    ey = event.x;
+    ex = event.y
+
+    #######################
+
+    mouseMenu = Tk()
+
+    mouseMenu.title("영상처리 선택")
+    mouseMenu.geometry("350x10")
+
+    mainMenu = Menu(mouseMenu)
+    mouseMenu.config(menu=mainMenu)
+    comVisionMenu1 = Menu(mainMenu)
+    mainMenu.add_cascade(label="화소점 처리", menu=comVisionMenu1)
+    comVisionMenu1.add_command(label="덧셈/뺄셈", command=addImageColor)
+    comVisionMenu1.add_command(label="반전하기", command=revImageColor)
+    comVisionMenu1.add_command(label="파라볼라", command=paraImageColor)
+    comVisionMenu1.add_separator()
+    comVisionMenu1.add_command(label="채도조절(Pillow)", command=addSValuePillow)
+    comVisionMenu1.add_command(label="채도조절(HSV)", command=addSValueHSV)
+
+    comVisionMenu2 = Menu(mainMenu)
+    mainMenu.add_cascade(label="통계", menu=comVisionMenu2)
+    comVisionMenu2.add_command(label="이진화", command=bwImageColor)
+    comVisionMenu2.add_command(label="이진화2", command=bwImageColor2)
+    comVisionMenu2.add_command(label="히스토그램(내꺼)", command=histoImage2Color)
+    comVisionMenu2.add_command(label="명암대비", command=stretchImageColor)
+    comVisionMenu2.add_command(label="End-In탐색", command=endinImageColor)
+    comVisionMenu2.add_command(label="평활화", command=equalizeImageColor)
+
+    comVisionMenu3 = Menu(mainMenu)
+    mainMenu.add_cascade(label="기하학 처리", menu=comVisionMenu3)
+    comVisionMenu3.add_command(label="상하반전", command=upDownImageColor)
+
+    comVisionMenu4 = Menu(mainMenu)
+    mainMenu.add_cascade(label="화소영역 처리", menu=comVisionMenu4)
+    comVisionMenu4.add_command(label="엠보싱(RGB)", command=embossImageRGB)
+    comVisionMenu4.add_command(label="엠보싱(Pillow)", command=embossImagePillow)
+    comVisionMenu4.add_command(label="엠보싱(HSV)", command=__embossImageHSV)
+    comVisionMenu4.add_separator()
+    comVisionMenu4.add_command(label="블러링(RGB)", command=blurrImageRGB)
+    comVisionMenu4.add_command(label="샤프닝(RGB)", command=shapeImageColor)
+    comVisionMenu4.add_command(label="가우시안(RGB)", command=gaussianImageColor)
+    comVisionMenu4.add_command(label="고주파(RGB)", command=onHpfImageColor)
+    comVisionMenu4.add_command(label="저주파(RGB)", command=onLpfImageColor)
+
+    comVisionMenu5 = Menu(mainMenu)
+    mainMenu.add_cascade(label="종료",menu=comVisionMenu5)
+    comVisionMenu5.add_command(label="종료", command=close)
+    ########################
+    canvas.bind('<Button-3>')
+    canvas.bind('<Button-2>', midMouseClick)
+    canvas.bind('<Button-1>')
+    canvas.bind('<B1-Motion>')
+    canvas.bind('<ButtonRelease-1>')
+
+def close():
+    global mouseMenu
+    mouseMenu.destroy()
+
+
+###############################################
+##### 컴퓨터 비전(영상처리) 알고리즘 함수 모음 #####
+###############################################
+
+
+# 동일영상 알고리즘
+def  equalImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ## 메모리 확보
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ############################
+    ### 진짜 컴퓨터 비전 알고리즘 ###
+    for RGB in range(3) :
+        for i in range(inH) :
+            for k in range(inW) :
+                outImage[RGB][i][k] = inImage[RGB][i][k]
+    #############################
+    displayImageColor()
+
+def addImageColor() : ## 완료
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ## 메모리 확보
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ############################
+    ### 진짜 컴퓨터 비전 알고리즘 ###
+    value = askinteger("밝게/어둡게", "값-->", minvalue=-255, maxvalue=255)
+    for RGB in range(3) :
+        for i in range(inH) :
+            for k in range(inW) :
+                if sx <= k <= ex and sy <= i <= ey:
+                    if inImage[RGB][i][k] + value > 255:
+                        outImage[RGB][i][k] = 255
+                    elif inImage[RGB][i][k] + value < 0:
+                        outImage[RGB][i][k] = 0
+                    else:
+                        outImage[RGB][i][k] = inImage[RGB][i][k] + value
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+    #############################
+    displayImageColor()
+
+    #stroy()
+
+def revImageColor(): ## 완료
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey, mouseMenu, x0, y0, MM
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ## 메모리 확보
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ############################
+    ### 진짜 컴퓨터 비전 알고리즘 ###
+
+
+
+    for RGB in range(3):
+        for i in range(inH):
+            for k in range(inW):
+                # outImage[RGB][i][k] = 255 - inImage[RGB][i][k]
+                if sx <= k <= ex and sy <= i <= ey:
+                    # h, s, v = inImageHSV[0][i][k], inImageHSV[1][i][k], tmpOutImageV[i][k]
+                    # r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = 255-inImage[R][i][k], 255-inImage[G][i][k], \
+                                                                              255-inImage[B][i][k]
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+    #############################
+    displayImageColor()
+    #stroy()
+
+def paraImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey, mouseMenu
+
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ## 메모리 확보
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ############################
+    ### 진짜 컴퓨터 비전 알고리즘 ###\
+    LUT = [0 for _ in range(256)]
+    for input in range(256):
+        LUT[input] = int(255 - 255 * math.pow(input / 128 - 1, 2))
+
+    for RGB in range(3):
+        for i in range(inH):
+            for k in range(inW):
+                if sx <= k <= ex and sy <= i <= ey:
+                 outImage[RGB][i][k] = LUT[inImage[RGB][i][k]]
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+    #############################
+    displayImageColor()
+    #stroy()
+
+def morphImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey, mouseMenu
+
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ## 추가 영상 선택
+    filename2 = askopenfilename(parent=window,
+                               filetypes=(("칼라 파일", "*.jpg;*.png;*.bmp;*.tif"), ("모든 파일", "*.*")))
+    if filename2 == '' or filename2 == None:
+        return
+    inImage2 = []
+    photo2 = Image.open(filename2) # PIL 객체
+    inW2 = photo2.width; inH2=photo2.height
+    ## 메모리 확보
+    for _ in range(3) :
+        inImage2.append(malloc(inH2, inW2))
+
+    photoRGB2 = photo2.convert('RGB')
+    for i in range(inH2) :
+        for k in range(inW2) :
+            r, g, b = photoRGB2.getpixel((k,i))
+            inImage2[R][i][k] = r
+            inImage2[G][i][k] = g
+            inImage2[B][i][k] = b
+
+    ## 메모리 확보
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+
+    import threading
+    import time
+    def morpFunc():
+        w1 = 1;
+        w2 = 0
+        for _ in range(20):
+            for RGB in range(3) :
+                for i in range(inH):
+                    for k in range(inW):
+                        newValue = int(inImage[RGB][i][k] * w1 + inImage2[RGB][i][k] * w2)
+                        if newValue > 255:
+                            newValue = 255
+                        elif newValue < 0:
+                            newValue = 0
+                        outImage[RGB][i][k] = newValue
+            displayImageColor()
+            w1 -= 0.05;
+            w2 += 0.05
+            time.sleep(0.5)
+
+    threading.Thread(target=morpFunc).start()
+
+# 상하반전 알고리즘
+def  upDownImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global sx, sy, ex, ey, mouseMenu
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    for RGB in range(3) :
+        for i in range(inH) :
+            for k in range(inW) :
+                if sx <= k <= ex and sy <= i <= ey:
+                    outImage[RGB][inH-i-1][k] = inImage[RGB][i][k]
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+
+    displayImageColor()
+    #stroy()
+
+# 영상 축소 알고리즘
+def  zoomOutImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    scale = askinteger("축소", "값-->", minvalue=2, maxvalue=16)
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH//scale;  outW = inW//scale;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    for RGB in range(3) :
+        for i in range(outH) :
+            for k in range(outW) :
+                outImage[RGB][i][k] = inImage[RGB][i*scale][k*scale]
+
+    displayImageColor()
+
+# 영상 확대 알고리즘
+def  zoomInImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    scale = askinteger("확대", "값-->", minvalue=2, maxvalue=8)
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH*scale;  outW = inW*scale;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    for RGB in range(3) :
+        for i in range(outH) :
+            for k in range(outW) :
+                outImage[RGB][i][k] = inImage[RGB][i//scale][k//scale]
+
+    displayImageColor()
+
+####################
+### 통계          ###
+####################
+# 스트레칭 알고리즘
+
+## 완료
+def  stretchImageColor() :## 완료
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    for RGB in range(3):
+        maxVal = minVal = inImage[RGB][0][0]
+    for RGB in range(3):
+        for i in range(inH) :
+            for k in range(inW) :
+                if inImage[RGB][i][k] < minVal :
+                    minVal = inImage[RGB][i][k]
+                elif inImage[RGB][i][k] > maxVal :
+                    maxVal = inImage[RGB][i][k]
+    for RGB in range(3):
+        for i in range(inH) :
+            for k in range(inW) :
+                if sx <= k <= ex and sy <= i <= ey:
+                    outImage[RGB][i][k] = int(((inImage[RGB][i][k] - minVal) / (maxVal - minVal)) * 255)
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+
+    displayImageColor()
+## 완료
+def  endinImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    minAdd = askinteger("최소", "최소에서추가-->", minvalue=0, maxvalue=255)
+    maxAdd = askinteger("최대", "최대에서감소-->", minvalue=0, maxvalue=255)
+    for RGB in range(3):
+        maxVal = minVal = inImage[RGB][0][0]
+
+        for i in range(inH) :
+            for k in range(inW) :
+                if inImage[RGB][i][k] < minVal :
+                    minVal = inImage[RGB][i][k]
+                elif inImage[RGB][i][k] > maxVal :
+                    maxVal = inImage[RGB][i][k]
+
+
+        #
+        minVal += minAdd
+        maxVal -= maxAdd
+
+        for i in range(inH) :
+            for k in range(inW) :
+                if sx <= k <= ex and sy <= i <= ey:
+                    value = int(((inImage[RGB][i][k] - minVal) / (maxVal - minVal)) * 255)
+                    if value < 0 :
+                        value = 0
+                    elif value > 255 :
+                        value = 255
+                    outImage[RGB][i][k] = value
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+
+    displayImageColor()
+    #stroy()
+
+# 평활화 알고리즘
+
+##완료
+def  equalizeImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    for RGB in range(3):
+        histo = [0] * 256; sumHisto = [0]*256; normalHisto = [0] * 256
+        ## 히스토그램
+        for i in range(inH) :
+            for k in range(inW) :
+                histo[inImage[RGB][i][k]] += 1
+        ## 누적히스토그램
+        sValue = 0
+        for i in range(len(histo)) :
+            sValue += histo[i]
+            sumHisto[i] = sValue
+        ## 정규화 누적 히스토그램
+        for i in range(len(sumHisto)):
+            normalHisto[i] = int(sumHisto[i] / (inW*inH) * 255)
+        ## 영상처리
+        for i in range(inH) :
+            for k in range(inW) :
+                if sx <= k <= ex and sy <= i <= ey:
+                    outImage[RGB][i][k] = normalHisto[inImage[RGB][i][k]]
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+    displayImageColor()
+    #stroy()
+## 완료X
+def  histoImageColor() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    inImage = []
+    photo = Image.open(filename)  # PIL 객체
+    r, g, b = photo.split()
+    print(r.histogram())
+    print(g.histogram())
+    print(b.histogram())
+    bins = list(range(256))
+    plt.plot(bins, r.histogram(), 'r')
+    plt.plot(bins, g.histogram(), 'g')
+    plt.plot(bins, b.histogram(), 'b')
+    plt.show()
+##완료
+def histoImage2Color():
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    outCountList = [[0] * 256 for _ in range(3)]
+    normalCountList = [[0] * 256 for _ in range(3)]
+    # 빈도수 계산
+    for RGB in range(3):
+        for i in range(outH):
+            for k in range(outW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    outCountList[RGB][outImage[RGB][i][k]] += 1
+        maxVal = max(outCountList[RGB]);
+        minVal = min(outCountList[RGB])
+        High = 256
+        # 정규화 = (카운트값 - 최소값) * High / (최대값 - 최소값)
+        for i in range(len(outCountList[RGB])):
+            normalCountList[RGB][i] = (outCountList[RGB][i] - minVal) * High / (maxVal - minVal)
+
+    ## 서브 윈도창 생성 후 출력
+    subWindow = Toplevel(window)
+    subWindow.geometry('%dx%d' % (256 * 3, 256))
+    subCanvas = Canvas(subWindow, width=256 * 3, height=256)
+    subPaper = PhotoImage(width=256 * 3, height=256)
+    subCanvas.create_image((256 * 3 // 2, 256 // 2), image=subPaper, state='normal')
+    for RGB in range(3):
+        for i in range(len(normalCountList[RGB])):
+            for k in range(int(normalCountList[RGB][i])):
+                # data= 0
+                # dataWhite = 255
+                if RGB == R:
+                    subPaper.put('#d62719', (256 * RGB + i, 255 - k))
+                elif RGB == G:
+                    subPaper.put('#4fc34e', (256 * RGB + i, 255 - k))
+                elif RGB == B:
+                    subPaper.put('#1948b4', (256 * RGB + i, 255 - k))
+    subCanvas.pack(expand=1, anchor=CENTER)
+    subWindow.mainloop()
+
+# 이진화 알고리즘
+def bwImageColor():
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ###### 메모리 할당 ################
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    ## 영상의 평균 구하기.
+    sum = []
+    for RGB in range(3):
+        sum.append(0)
+        for i in range(inH):
+            for k in range(inW):
+                sum[RGB] += inImage[RGB][i][k]
+    avg = [s // (inW * inH) for s in sum]
+    print(sum)
+
+    for RGB in range(3):
+        for i in range(inH):
+            for k in range(inW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    if inImage[RGB][i][k] > avg[RGB]:
+                        outImage[RGB][i][k] = 255
+                    else:
+                        outImage[RGB][i][k] = 0
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+    displayImageColor()
+    #stroy()
+
+def bwImageColor2():
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ###### 메모리 할당 ################
+    outImage = []
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    tmpImage = []
+    tmpImage = malloc(outH, outW)
+
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    ## 영상의 평균 구하기.
+    sum = []
+    avgVal = []
+    for RGB in range(3):
+        sum.append(0)
+        for i in range(inH):
+            for k in range(inW):
+                # if sx <= k <= ex and sy <= i <= ey:
+                    sum[RGB] += inImage[RGB][i][k]
+
+    for s in sum:
+        avg = s // (inW * inH)
+
+    for i in range(inH):
+        for k in range(inW):
+            # if sx <= k <= ex and sy <= i <= ey:
+                tmpImage[i][k] = (inImage[0][i][k] + inImage[1][i][k] + inImage[2][i][k]) // 3
+    for RGB in range(3):
+        for i in range(inH):
+            for k in range(inW):
+
+                if sx <= k <= ex and sy <= i <= ey:
+                    if tmpImage[i][k] > avg:
+                        newValue = 255
+                    else:
+                        newValue = 0
+                    outImage[RGB][i][k] = newValue
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+
+    # print(sum)
+    # print(avg)
+
+
+
+    # for RGB in range(3):
+    #     for i in range(inH):
+    #         for k in range(inW):
+    #             if avgVal > avg[RGB]:
+    #                 newValue = 255
+    #             else:
+    #                 newValue = 0
+    #             outImage[RGB][i][k] = newValue
+
+
+    displayImageColor()
+    #stroy()
+
+####################
+### 화소 영역 처리 ###
+####################
+
+def  embossImageRGB() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    MSIZE = 3
+    mask = [ [-1, 0, 0],
+             [ 0, 0, 0],
+             [ 0, 0, 1] ]
+    ## 임시 입력영상 메모리 확보
+    tmpInImage, tmpOutImage=[], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH+MSIZE-1, inW+MSIZE-1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시 입력
+    for RGB in range(3) :
+        for i in range(inH) :
+            for k in range(inW) :
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+    ## 회선연산
+    for RGB in range(3):
+        for i in range(MSIZE//2, inH + MSIZE//2) :
+            for k in range(MSIZE//2, inW + MSIZE//2) :
+                # 각 점을 처리.
+                S = 0.0
+                for m in range(0, MSIZE) :
+                    for n in range(0, MSIZE) :
+                        S += mask[m][n]*tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = S
+    ## 127 더하기 (선택)
+    for RGB in range(3):
+        for i in range(outH) :
+            for k in range(outW) :
+                tmpOutImage[RGB][i][k] += 127
+    ## 임시 출력 --> 원 출력
+    for RGB in range(3):
+        for i in range(outH):
+            for k in range(outW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    value = tmpOutImage[RGB][i][k]
+                    if value > 255 :
+                        value = 255
+                    elif value < 0 :
+                        value = 0
+                    outImage[RGB][i][k] = int(value)
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+    displayImageColor()
+    #stroy()
+
+def  embossImagePillow() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global photo
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    photo2 = photo.copy()
+    photo2 = photo2.filter(ImageFilter.EMBOSS)
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+
+    ## 임시 출력 --> 원 출력
+    for i in range(outH):
+        for k in range(outW):
+            if sx <= k <= ex and sy <= i <= ey:
+                r, g, b = photo2.getpixel((k, i))
+                outImage[R][i][k] = r
+                outImage[G][i][k] = g
+                outImage[B][i][k] = b
+            else:
+                outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                          inImage[B][i][k]
+    displayImageColor()
+    #stroy()
+
+def  __embossImageHSV() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+
+    ## 입력 RGB --> 입력 HSV
+    # 메모리 확보
+    inImageHSV = [];
+    for _ in range(3):
+        inImageHSV.append(malloc(inH, inW))
+    # RGB -> HSV
+    for i in range(inH) :
+        for k in range(inW) :
+            r, g, b = inImage[R][i][k], inImage[G][i][k], inImage[B][i][k]
+            h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
+            inImageHSV[0][i][k], inImageHSV[1][i][k], inImageHSV[2][i][k] = h, s, v
+
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    MSIZE = 3
+    mask = [[-1, 0, 0],
+            [0, 0, 0],
+            [0, 0, 1]]
+    ## 임시 입력영상 메모리 확보
+    tmpInImageV, tmpOutImageV = [], []
+    tmpInImageV=(malloc(inH + MSIZE - 1, inW + MSIZE - 1, 127))
+    tmpOutImageV=(malloc(outH, outW))
+    ## 원 입력 --> 임시 입력
+    for i in range(inH):
+        for k in range(inW):
+            tmpInImageV[i + MSIZE // 2][k + MSIZE // 2] = inImageHSV[2][i][k]
+    ## 회선연산
+    for i in range(MSIZE // 2, inH + MSIZE // 2):
+        for k in range(MSIZE // 2, inW + MSIZE // 2):
+            # 각 점을 처리.
+            S = 0.0
+            for m in range(0, MSIZE):
+                for n in range(0, MSIZE):
+                    S += mask[m][n] * tmpInImageV[i + m - MSIZE // 2][k + n - MSIZE // 2]
+            tmpOutImageV[i - MSIZE // 2][k - MSIZE // 2] = S*255
+    ## 127 더하기 (선택)
+    for i in range(outH):
+        for k in range(outW):
+            tmpOutImageV[i][k] += 127
+            if tmpOutImageV[i][k] > 255 :
+                tmpOutImageV[i][k] = 255
+            elif tmpOutImageV[i][k] < 0 :
+                tmpOutImageV[i][k] = 0
+
+    ## HSV --> RGB
+    for i in range(outH):
+        for k in range(outW):
+            if sx <= k <= ex and sy <=i <=ey:
+                h, s, v = inImageHSV[0][i][k], inImageHSV[1][i][k], tmpOutImageV[i][k]
+                r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                outImage[R][i][k], outImage[G][i][k], outImage[B][i][k]= int(r), int(g), int(b)
+            else:
+                outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], inImage[B][i][k]
+    displayImageColor()
+
+def  blurrImageRGB() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    MSIZE = 3
+    mask = [ [ 1/9, 1/9, 1/9],
+             [ 1/9, 1/9, 1/9],
+             [ 1/9, 1/9, 1/9] ]
+    ## 임시 입력영상 메모리 확보
+    tmpInImage, tmpOutImage=[], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH+MSIZE-1, inW+MSIZE-1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시 입력
+    for RGB in range(3) :
+        for i in range(inH) :
+            for k in range(inW) :
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+    ## 회선연산
+    for RGB in range(3):
+        for i in range(MSIZE//2, inH + MSIZE//2) :
+            for k in range(MSIZE//2, inW + MSIZE//2) :
+                # 각 점을 처리.
+                S = 0.0
+                for m in range(0, MSIZE) :
+                    for n in range(0, MSIZE) :
+                        S += mask[m][n]*tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = S
+    ## 127 더하기 (선택)
+    # for RGB in range(3):
+    #     for i in range(outH) :
+    #         for k in range(outW) :
+    #             tmpOutImage[RGB][i][k] += 127
+    ## 임시 출력 --> 원 출력
+    for RGB in range(3):
+        for i in range(outH):
+            for k in range(outW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    value = tmpOutImage[RGB][i][k]
+                    if value > 255 :
+                        value = 255
+                    elif value < 0 :
+                        value = 0
+                    outImage[RGB][i][k] = int(value)
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+
+    displayImageColor()
+    #stroy()
+
+def  blurrImageRGB2() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;  outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    MSIZE = 3
+    mask = [ [ 1/9, 1/9, 1/9],
+             [ 1/9, 1/9, 1/9],
+             [ 1/9, 1/9, 1/9] ]
+    ## 임시 입력영상 메모리 확보
+    tmpInImage, tmpOutImage=[], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH+MSIZE-1, inW+MSIZE-1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시 입력
+    for RGB in range(3) :
+        for i in range(inH) :
+            for k in range(inW) :
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+    ## 회선연산
+    for RGB in range(3):
+        for i in range(MSIZE//2, inH + MSIZE//2) :
+            for k in range(MSIZE//2, inW + MSIZE//2) :
+                # 각 점을 처리.
+                S = 0.0
+                for m in range(0, MSIZE) :
+                    for n in range(0, MSIZE) :
+                        S += mask[m][n]*tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = S
+    ## 127 더하기 (선택)
+    # for RGB in range(3):
+    #     for i in range(outH) :
+    #         for k in range(outW) :
+    #             tmpOutImage[RGB][i][k] += 127
+    ## 임시 출력 --> 원 출력
+    for RGB in range(3):
+        for i in range(outH):
+            for k in range(outW):
+
+                    value = tmpOutImage[RGB][i][k]
+                    if value > 255 :
+                        value = 255
+                    elif value < 0 :
+                        value = 0
+                    outImage[RGB][i][k] = int(value)
+
+    displayImageColor()
+
+def  addSValuePillow() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    global photo
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    value = askfloat("","0~1~10")
+    photo2 = photo.copy()
+    photo2 = ImageEnhance.Color(photo2)
+    photo2 = photo2.enhance(value)
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+
+    ## 임시 출력 --> 원 출력
+    for i in range(outH):
+        for k in range(outW):
+            if sx <= k <= ex and sy <= i <= ey:
+                r, g, b = photo2.getpixel((k, i))
+                outImage[R][i][k] = r
+                outImage[G][i][k] = g
+                outImage[B][i][k] = b
+            else:
+                outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                          inImage[B][i][k]
+
+    displayImageColor()
+
+def  addSValueHSV() :
+    global window, canvas, paper, filename, inImage, outImage, inH, inW, outH, outW
+    ## 입력 RGB --> 입력 HSV
+    # 메모리 확보
+    inImageHSV = [];
+    for _ in range(3):
+        inImageHSV.append(malloc(inH, inW))
+    # RGB -> HSV
+    for i in range(inH) :
+        for k in range(inW) :
+                r, g, b = inImage[R][i][k], inImage[G][i][k], inImage[B][i][k]
+                h, s, v = colorsys.rgb_to_hsv(r/255, g/255, b/255)
+                inImageHSV[0][i][k], inImageHSV[1][i][k], inImageHSV[2][i][k] = h, s, v
+
+
+    ## 중요! 코드. 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW;
+    ###### 메모리 할당 ################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ####### 진짜 컴퓨터 비전 알고리즘 #####
+    value = askfloat("","-255~255")
+    ## 임시 입력영상 메모리 확보
+
+    ## 원 입력 --> 임시 입력
+
+
+    ## HSV --> RGB
+    for i in range(outH):
+        for k in range(outW):
+            if sx <= k <= ex and sy <= i <= ey:
+                newS = inImageHSV[1][i][k] + value
+                if newS < 0:
+                    newS = 0
+                elif newS > 1.0:
+                    newS = 1.0
+                h, s, v = inImageHSV[0][i][k], newS, inImageHSV[2][i][k]*255
+                r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                outImage[R][i][k], outImage[G][i][k], outImage[B][i][k]= int(r), int(g), int(b)
+            else:
+                outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                          inImage[B][i][k]
+
+
+    displayImageColor()
+    
+##샤프닝 처리
+def shapeImageColor():
+    global window, canvas, paper, filename, inImage, outImage, inW, inH, outW, outH
+    ## 중요! 코드, 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW
+    ###################################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ########진짜 컴퓨터 비전 알고리즘 ########
+    MSIZE = 3
+    mask = [ [0, -1, 0],
+             [ -1, 5, -1],
+             [ 0, -1, 0] ]
+    ## 임시 입력 영상 메모리 확보
+    tmpInImage, tmpOutImage = [], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH + MSIZE - 1, inW + MSIZE - 1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시입력
+    for RGB in range(3):
+        for i in range(inH) :
+            for k in range(inW):
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+    ##회선 연산
+        for i in range(MSIZE//2, inH+MSIZE//2):
+            for k in range(MSIZE//2, inW+MSIZE//2):
+               ## 각 점을 처리,
+                S = 0.0
+                for m in range(0 , MSIZE):
+                    for n in range(0 ,MSIZE):
+                        S += mask[m][n] * tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = S
+    # for i in range(outH):
+    #     for k in range(outW):
+    #         tmpOutImage[i][k] +=127
+    ##임시 출력 --> 원출력
+        for i in range(outH):
+            for k in range(outW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    value = tmpOutImage[RGB][i][k]
+                    if value > 255:
+                        value = 255
+                    elif value < 0:
+                        value = 0
+                    outImage[RGB][i][k] = int(value)
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                              inImage[B][i][k]
+
+    displayImageColor()
+
+#가우시안 필터링
+def gaussianImageColor():
+    global window, canvas, paper, filename, inImage, outImage, inW, inH, outW, outH
+    ## 중요! 코드, 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW
+    ###################################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ########진짜 컴퓨터 비전 알고리즘 ########
+    MSIZE = 3
+    mask = [ [1/16, 1/8, 1/16],
+             [ 1/8, 1/4, 1/8],
+             [ 1/16, 1/8, 1/16] ]
+    ## 임시 입력 영상 메모리 확보
+    tmpInImage, tmpOutImage = [], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH + MSIZE - 1, inW + MSIZE - 1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시입력
+    for RGB in range(3):
+        for i in range(inH) :
+            for k in range(inW):
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+    ##회선 연산
+    for RGB in range(3):
+        for i in range(MSIZE//2, inH+MSIZE//2):
+            for k in range(MSIZE//2, inW+MSIZE//2):
+               ## 각 점을 처리,
+                S = 0.0
+                for m in range(0 , MSIZE):
+                    for n in range(0 ,MSIZE):
+                        S += mask[m][n] * tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = S
+        # for i in range(outH):
+        #     for k in range(outW):
+        #         tmpOutImage[i][k] +=127
+        ##임시 출력 --> 원출력
+        for i in range(outH):
+            for k in range(outW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    value = tmpOutImage[RGB][i][k]
+                    if value > 255:
+                        value = 255
+                    elif value < 0:
+                        value = 0
+                    outImage[RGB][i][k] = int(value)
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                          inImage[B][i][k]
+
+    displayImageColor()
+
+#고주파 필터
+
+def onHpfImageColor():
+    global window, canvas, paper, filename, inImage, outImage, inW, inH, outW, outH
+    ## 중요! 코드, 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW
+    ###################################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ########진짜 컴퓨터 비전 알고리즘 ########
+    MSIZE = 3
+    mask = [ [-1., -1., -1.],
+             [ -1., 8., -1.],
+             [ -1., -1., -1.] ]
+    ## 임시 입력 영상 메모리 확보
+    tmpInImage, tmpOutImage = [], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH + MSIZE - 1, inW + MSIZE - 1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시입력
+    for RGB in range(3):
+        for i in range(inH) :
+            for k in range(inW):
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+        ##회선 연산
+        for i in range(MSIZE//2, inH+MSIZE//2):
+            for k in range(MSIZE//2, inW+MSIZE//2):
+               ## 각 점을 처리,
+                S = 0.0
+                for m in range(0 , MSIZE):
+                    for n in range(0 ,MSIZE):
+                        S += mask[m][n] * tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = S
+        # for i in range(outH):
+        #     for k in range(outW):
+        #         tmpOutImage[i][k] +=127
+        ##임시 출력 --> 원출력
+        for i in range(outH):
+            for k in range(outW):
+                if sx <= k <= ex and sy <= i <= ey:
+                    value = tmpOutImage[RGB][i][k]
+                    if value > 255:
+                        value = 255
+                    elif value < 0:
+                        value = 0
+                    outImage[RGB][i][k] = int(value)
+                else:
+                    outImage[R][i][k], outImage[G][i][k], outImage[B][i][k] = inImage[R][i][k], inImage[G][i][k], \
+                                                                          inImage[B][i][k]
+
+
+    displayImageColor()
+
+#저주파 필터
+
+def onLpfImageColor():
+    global window, canvas, paper, filename, inImage, outImage, inW, inH, outW, outH
+    ## 중요! 코드, 출력영상 크기 결정 ##
+    outH = inH;
+    outW = inW
+    ###################################
+    outImage = [];
+    for _ in range(3):
+        outImage.append(malloc(outH, outW))
+    ########진짜 컴퓨터 비전 알고리즘 ########
+    MSIZE = 3
+    mask = [ [1/9, 1/9, 1/9],
+             [ 1/9, 1/9, 1/9],
+             [ 1/9, 1/9, 1/9] ]
+    ##상수 입력
+    dlg = askinteger("입력할 값", "값 입력 -->",minvalue = 1)
+    ## 임시 입력 영상 메모리 확보
+    tmpInImage, tmpOutImage = [], []
+    for _ in range(3):
+        tmpInImage.append(malloc(inH + MSIZE - 1, inW + MSIZE - 1, 127))
+    for _ in range(3):
+        tmpOutImage.append(malloc(outH, outW))
+    ## 원 입력 --> 임시입력
+    for RGB in range(3):
+        for i in range(inH) :
+            for k in range(inW):
+                tmpInImage[RGB][i+MSIZE//2][k+MSIZE//2] = inImage[RGB][i][k]
+        ##회선 연산
+        for i in range(MSIZE//2, inH+MSIZE//2):
+            for k in range(MSIZE//2, inW+MSIZE//2):
+               ## 각 점을 처리,
+                S = 0.0
+                for m in range(0 , MSIZE):
+                    for n in range(0 ,MSIZE):
+                        S += mask[m][n] * tmpInImage[RGB][i+m-MSIZE//2][k+n-MSIZE//2]
+                tmpOutImage[RGB][i-MSIZE//2][k-MSIZE//2] = dlg*tmpInImage[RGB][i-MSIZE//2][k-MSIZE//2]-S
+        # for i in range(outH):
+        #     for k in range(outW):
+        #         tmpOutImage[i][k] +=127
+        ##임시 출력 --> 원출력
+        for i in range(outH):
+            for k in range(outW):
+                value = tmpOutImage[RGB][i][k]
+                if value > 255:
+                    value = 255
+                elif value < 0:
+                    value = 0
+                outImage[RGB][i][k] = int(value)
+
+
+    displayImageColor()
+
+
+####################
+#### 전역변수 선언부 ####
+####################
+R, G, B = 0, 1, 2
+inImage, outImage = [], []  # 3차원 리스트(배열)
+inH, inW, outH, outW = [0] * 4
+window, canvas, paper = None, None, None
+filename = ""
+VIEW_X, VIEW_Y = 512, 512 # 화면에 보일 크기 (출력용)
+####################
+#### 메인 코드부 ####
+####################
+window = Tk()
+window.geometry("500x500")
+window.title("컴퓨터 비전(마우스이벤트) ver 0.1")
+
+status = Label(window, text='이미지 정보:', bd=1, relief=SUNKEN, anchor=W)
+status.pack(side=BOTTOM, fill=X)
+
+## 마우스 이벤트
+
+mainMenu = Menu(window)
+window.config(menu=mainMenu)
+
+fileMenu = Menu(mainMenu)
+mainMenu.add_cascade(label="파일", menu=fileMenu)
+fileMenu.add_command(label="파일 열기", command=openImageColor)
+fileMenu.add_separator()
+fileMenu.add_command(label="파일 저장", command=saveImageColor)
+
+
+#
+# comVisionMenu5 = Menu(mainMenu)
+# mainMenu.add_cascade(label="기타 입출력", menu=comVisionMenu5)
+# comVisionMenu5.add_command(label="MySQL에서 불러오기", command=loadMysql)
+# comVisionMenu5.add_command(label="MySQL에 저장하기", command=saveMysql)
+# comVisionMenu5.add_separator()
+# comVisionMenu5.add_command(label="CSV 열기", command=openCSV)
+# comVisionMenu5.add_command(label="CSV로 저장", command=saveCSV)
+# comVisionMenu5.add_separator()
+# comVisionMenu5.add_command(label="엑셀 열기", command=openExcel)
+# comVisionMenu5.add_command(label="엑셀로 저장", command=saveExcel)
+# comVisionMenu5.add_command(label="엑셀 아트로 저장", command=saveExcelArt)
+
+
+window.mainloop()
